@@ -13,7 +13,9 @@ This repo implements the infrastructure and documentation described in [`lab.md`
 | [`docs/concepts-and-architecture.md`](./docs/concepts-and-architecture.md) | Concepts, Azure services, and how they link |
 | [`docs/validation-checklist.md`](./docs/validation-checklist.md) | Post-deploy checklist |
 
-**Secrets:** set `WINDOWS_ADMIN_PASSWORD` before deploy/validate. Replace the placeholder SSH public key in parameter files. Optionally set `AZURE_SUBSCRIPTION_ID` instead of relying on the default CLI subscription.
+**Secrets:** set `WINDOWS_ADMIN_PASSWORD` before deploy/validate. Optionally set `AZURE_SUBSCRIPTION_ID` instead of relying on the default CLI subscription.
+
+**SSH key:** Parameter files include a **syntactically valid** ed25519 public key so Azure accepts `keyData` at deploy time. The matching **private key is not in this repo**—replace `sshPublicKey` with your own `~/.ssh/id_ed25519.pub` (or pass `--parameters sshPublicKey="$(cat ~/.ssh/id_ed25519.pub)"`) before SSH will work.
 
 **Policy:** Some subscriptions deny VM SKUs not on an allow-list (e.g. `Standard_B1s`). The **dev** parameter files use **`Standard_B1ms`** (Linux app) and **`Standard_B2ms`** (Windows DB), which match many IITB-style policies. Change `vmAppSize` / `vmDbSize` in your parameters JSON if your tenant requires different sizes.
 

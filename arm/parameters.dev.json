@@ -57,7 +57,7 @@
       "value": "azureuser"
     },
     "sshPublicKey": {
-      "value": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCplaceholderReplaceBeforeDeploy"
+      "value": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJb/7SK2cLqCbU18OrYUFZWIR4nzU9hspN+wmN7qEI5Y azure-lab-placeholder-replace-with-your-key"
     },
     "privateDnsZoneName": {
       "value": "internal.contoso.local"
