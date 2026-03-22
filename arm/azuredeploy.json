@@ -2,7 +2,7 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "metadata": {
-    "description": "Lab: VNet, NSGs, Linux app VMs, Windows DB VM, data disks, Private DNS, nginx via CustomScriptExtension."
+    "description": "Lab: VNet, NSGs, Linux app VMs, Windows DB VM, data disks, internal Private DNS, Blob Storage over Private Link, nginx via CustomScriptExtension."
   },
   "parameters": {
     "location": {
@@ -154,6 +154,30 @@
       "metadata": {
         "description": "Static private IP for the database VM NIC (must fall within db subnet)."
       }
+    },
+    "subnetPeName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the subnet used for the blob private endpoint."
+      }
+    },
+    "subnetPePrefix": {
+      "type": "string",
+      "metadata": {
+        "description": "CIDR for the private endpoint subnet (must fit inside the VNet address space)."
+      }
+    },
+    "blobPrivateEndpointName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the private endpoint resource targeting Blob Storage."
+      }
+    },
+    "blobPrivateDnsVnetLinkName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the VNet link under the blob Private DNS zone (privatelink.blob.core.windows.net on public Azure)."
+      }
     }
   },
   "variables": {
@@ -167,6 +191,9 @@
     "netApiVersion": "2023-09-01",
     "computeApiVersion": "2023-03-01",
     "dnsApiVersion": "2020-06-01",
+    "storageApiVersion": "2023-01-01",
+    "blobPrivateDnsZoneName": "privatelink.blob.core.windows.net",
+    "storageAccountName": "[toLower(take(concat('st', uniqueString(resourceGroup().id)), 24))]",
     "appPrivateIps": [
       "[parameters('vmApp01PrivateIp')]",
       "[parameters('vmApp02PrivateIp')]"
@@ -304,6 +331,132 @@
               "networkSecurityGroup": {
                 "id": "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('nsgDbName'))]"
               }
+            }
+          },
+          {
+            "name": "[parameters('subnetPeName')]",
+            "properties": {
+              "addressPrefix": "[parameters('subnetPePrefix')]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "[variables('storageApiVersion')]",
+      "name": "[variables('storageAccountName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+      ],
+      "metadata": {
+        "description": "TEACHING NOTE: publicNetworkAccess Disabled forces blob access via Private Link (or trusted Microsoft services where applicable)."
+      },
+      "sku": {
+        "name": "Standard_LRS",
+        "tier": "Standard"
+      },
+      "kind": "StorageV2",
+      "properties": {
+        "publicNetworkAccess": "Disabled",
+        "allowBlobPublicAccess": false,
+        "minimumTlsVersion": "TLS1_2",
+        "supportsHttpsTrafficOnly": true,
+        "networkAcls": {
+          "defaultAction": "Deny",
+          "bypass": "AzureServices"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices",
+      "apiVersion": "[variables('storageApiVersion')]",
+      "name": "[concat(variables('storageAccountName'), '/default')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ],
+      "properties": {
+        "deleteRetentionPolicy": {
+          "enabled": false
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "[variables('storageApiVersion')]",
+      "name": "[concat(variables('storageAccountName'), '/default/lab-data')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageAccountName'), 'default')]"
+      ],
+      "properties": {
+        "publicAccess": "None"
+      }
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "[variables('dnsApiVersion')]",
+      "name": "[variables('blobPrivateDnsZoneName')]",
+      "location": "global",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "[variables('dnsApiVersion')]",
+      "name": "[concat(variables('blobPrivateDnsZoneName'), '/', parameters('blobPrivateDnsVnetLinkName'))]",
+      "location": "global",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('blobPrivateDnsZoneName'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+      ],
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "[variables('netApiVersion')]",
+      "name": "[parameters('blobPrivateEndpointName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+        "[resourceId('Microsoft.Network/privateDnsZones/virtualNetworkLinks', variables('blobPrivateDnsZoneName'), parameters('blobPrivateDnsVnetLinkName'))]"
+      ],
+      "properties": {
+        "subnet": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('subnetPeName'))]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "blob-pls-conn",
+            "properties": {
+              "privateLinkServiceId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+              "groupIds": ["blob"]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "[variables('netApiVersion')]",
+      "name": "[concat(parameters('blobPrivateEndpointName'), '/default')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateEndpoints', parameters('blobPrivateEndpointName'))]",
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('blobPrivateDnsZoneName'))]"
+      ],
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "privatelink-blob",
+            "properties": {
+              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('blobPrivateDnsZoneName'))]"
             }
           }
         ]
@@ -663,6 +816,13 @@
       },
       "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('subnetDbName'))]"
     },
+    "peSubnetId": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource ID of the private endpoint subnet."
+      },
+      "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('subnetPeName'))]"
+    },
     "vmApp01PrivateIp": {
       "type": "string",
       "value": "[reference(resourceId('Microsoft.Network/networkInterfaces', concat(parameters('vmAppNames')[0], '-nic')), variables('netApiVersion')).properties.ipConfigurations[0].properties.privateIPAddress]"
@@ -678,6 +838,34 @@
     "privateDnsZoneId": {
       "type": "string",
       "value": "[resourceId('Microsoft.Network/privateDnsZones', parameters('privateDnsZoneName'))]"
+    },
+    "blobStorageAccountName": {
+      "type": "string",
+      "metadata": {
+        "description": "Storage account name for the Private Link blob demo."
+      },
+      "value": "[variables('storageAccountName')]"
+    },
+    "blobEndpointUri": {
+      "type": "string",
+      "metadata": {
+        "description": "HTTPS blob endpoint for the storage account."
+      },
+      "value": "[concat('https://', variables('storageAccountName'), '.blob.core.windows.net/')]"
+    },
+    "blobPrivateEndpointIp": {
+      "type": "string",
+      "metadata": {
+        "description": "Private IP address used for blob on the private endpoint."
+      },
+      "value": "[reference(resourceId('Microsoft.Network/privateEndpoints', parameters('blobPrivateEndpointName')), variables('netApiVersion')).properties.customDnsConfigs[0].ipAddresses[0]]"
+    },
+    "blobPrivateDnsZoneId": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource ID of the Private DNS zone for blob Private Link."
+      },
+      "value": "[resourceId('Microsoft.Network/privateDnsZones', variables('blobPrivateDnsZoneName'))]"
     }
   }
 }

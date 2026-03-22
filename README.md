@@ -1,13 +1,13 @@
 # Azure labs — networking VM lab
 
-This repo implements the infrastructure and documentation described in [`lab.md`](./lab.md).
+This repo implements the infrastructure and documentation described in [`lab.md`](./lab.md). It includes **Private Link to Azure Blob Storage** (private endpoint in `snet-pe`, `privatelink.blob…` DNS, storage public access disabled). See [`docs/concepts-and-architecture.md`](./docs/concepts-and-architecture.md) for how that differs from internal VM Private DNS.
 
 | Path | Purpose |
 |------|---------|
 | [`arm/azuredeploy.json`](./arm/azuredeploy.json) | ARM template (single file) |
 | [`arm/parameters.dev.json`](./arm/parameters.dev.json) / [`arm/parameters.prod.json`](./arm/parameters.prod.json) | Environment-specific parameters |
 | [`bicep/main.bicep`](./bicep/main.bicep) | Modular Bicep entrypoint |
-| [`bicep/network.bicep`](./bicep/network.bicep), [`compute.bicep`](./bicep/compute.bicep), [`storage.bicep`](./bicep/storage.bicep), [`dns.bicep`](./bicep/dns.bicep) | Modules |
+| [`bicep/network.bicep`](./bicep/network.bicep), [`compute.bicep`](./bicep/compute.bicep), [`storage.bicep`](./bicep/storage.bicep), [`dns.bicep`](./bicep/dns.bicep), [`blob-privatelink.bicep`](./bicep/blob-privatelink.bicep) | Modules |
 | [`scripts/`](./scripts/) | Deploy, validate, cleanup (executable) |
 | [`docs/lab-guide.md`](./docs/lab-guide.md) | Student lab guide |
 | [`docs/concepts-and-architecture.md`](./docs/concepts-and-architecture.md) | Concepts, Azure services, and how they link |

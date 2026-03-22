@@ -14,7 +14,7 @@ This document explains the **ideas** behind the networking VM lab, the **Azure s
 
 ## Big picture: subscription to workload
 
-Everything in this lab lives under a **subscription** (billing and policy boundary). You deploy into a **resource group** (a folder for lifecycle and permissions). Inside one region, the **virtual network** defines private IP space; **virtual machines** run on **compute** and talk on the network through **network interfaces**. **Disks** hold OS and data. **Private DNS** lets VMs resolve friendly names inside the VNet.
+Everything in this lab lives under a **subscription** (billing and policy boundary). You deploy into a **resource group** (a folder for lifecycle and permissions). Inside one region, the **virtual network** defines private IP space; **virtual machines** run on **compute** and talk on the network through **network interfaces**. **Disks** hold OS and data. **Private DNS** lets VMs resolve friendly names inside the VNet. **Private Link** connects a **PaaS** service (here **Azure Blob Storage**) into that VNet on a **private IP**, with a **separate** Private DNS zone so the same blob hostname resolves to that IP from inside the VNet.
 
 ```mermaid
 flowchart TB
@@ -28,10 +28,12 @@ flowchart TB
     VNET[Virtual network]
     SNET_APP[Subnet snet-app]
     SNET_DB[Subnet snet-db]
+    SNET_PE[Subnet snet-pe]
     NSG_APP[NSG nsg-app]
     NSG_DB[NSG nsg-db]
     VNET --> SNET_APP
     VNET --> SNET_DB
+    VNET --> SNET_PE
     NSG_APP -.->|associated| SNET_APP
     NSG_DB -.->|associated| SNET_DB
   end
@@ -118,8 +120,8 @@ Solid arrows are typical “contains” or “uses” relationships; dotted line
 
 **Links:**
 
-- VNet **contains** subnets (`snet-app`, `snet-db`).
-- Each subnet has an **address range** inside the VNet range (`10.0.1.0/24`, `10.0.2.0/24`).
+- VNet **contains** subnets (`snet-app`, `snet-db`, **`snet-pe`** for the blob private endpoint).
+- Each subnet has an **address range** inside the VNet range (e.g. `10.0.1.0/24`, `10.0.2.0/24`, `10.0.3.0/24` for PE).
 - A **network interface (NIC)** is **connected to exactly one subnet** (for this lab’s simple layout).
 
 **Routing:** Traffic between subnets in the same VNet is allowed by the platform **unless** you add custom UDRs (this lab does not). **NSGs** then filter what L4 traffic is allowed.
@@ -190,6 +192,39 @@ Solid arrows are typical “contains” or “uses” relationships; dotted line
 
 **Flow:** VM asks Azure DNS for `db01.internal.contoso.local` → DNS returns the **private IP** of `vm-db-01` → traffic stays **inside** the VNet (no Internet required for that name).
 
+**Not the same as Private Link:** This zone is for **your** names (`internal.contoso.local`). Blob Private Link uses the **well-known** zone `privatelink.blob.<storage-suffix>` (see below) so Azure’s blob hostname continues to work for clients, but the IP is **private**.
+
+---
+
+### Private Link and Azure Blob Storage
+
+| Concept | What it is | Azure service |
+|--------|------------|----------------|
+| **Private Link (to a service)** | Exposes an Azure-managed service into your VNet on **private IP(s)**; traffic does not use the service’s **public** endpoint from that path. | **Private endpoint** — `Microsoft.Network/privateEndpoints` with a `privateLinkServiceConnections` entry targeting a resource (here a **storage account** sub-resource `blob`). |
+| **Private Link Service (managed)** | On the service side, Azure provides the **target** for the connection; you do not deploy `PrivateLinkService` for first-party PaaS. | Resolved via `privateLinkServiceId` = storage account resource ID and `groupIds: ['blob']`. |
+| **Private DNS for Private Link** | Zone that holds the records needed so `account.blob.<suffix>` resolves to the **private endpoint** IP **inside** linked VNets. | `Microsoft.Network/privateDnsZones` named `privatelink.blob.<storage-suffix>` (public Azure: `…core.windows.net`). |
+| **Private DNS zone group** | Associates the private endpoint with the right Private DNS zone so **A records** are created/updated automatically. | `Microsoft.Network/privateEndpoints/privateDnsZoneGroups` |
+
+**Links in this lab:**
+
+1. **Storage account** has `publicNetworkAccess: Disabled` and default network **Deny** → the blob service is not reachable over the **public** internet from arbitrary clients; access is via Private Link (and trusted Microsoft scenarios per `bypass` where applicable).
+2. **Private endpoint** NIC sits in **`snet-pe`** (dedicated subnet; no NSG in this template—see Microsoft guidance for combining **private endpoints** and **NSGs**).
+3. **VNet link** attaches the `privatelink.blob.…` zone to **`vnet-prod`** so VMs using Azure-provided DNS resolve the storage hostname to the **private endpoint IP**.
+4. **Zone group** on the endpoint ties the endpoint to that zone so the correct **A** records exist.
+
+```mermaid
+flowchart LR
+  VM[App VM in snet-app]
+  AZDNS[Azure DNS + privatelink.blob zone]
+  PE[Private endpoint in snet-pe]
+  BLOB[Blob service on storage account]
+
+  VM -->|"resolve account.blob…"| AZDNS
+  AZDNS -->|"private IP of PE"| VM
+  VM -->|"HTTPS"| PE
+  PE -->|"Private Link"| BLOB
+```
+
 ---
 
 ## Traffic and control-plane stories (mental models)
@@ -206,17 +241,22 @@ Source IP is in **`10.0.1.0/24`** (app subnet). **NSG on `snet-db`** allows TCP 
 
 Query for `app02.internal.contoso.local` goes to **Azure DNS for the linked Private zone** → **A record** (or auto-registered name) → **private IP** of the target NIC.
 
+### Blob hostname from a VM (Private Link path)
+
+From `vm-app-01`, a lookup for `<storageAccount>.blob.core.windows.net` is answered using the **`privatelink.blob.…`** zone linked to the VNet. The result is the **private IP** of the **private endpoint** in `snet-pe`. HTTPS traffic to that IP reaches **Blob** without traversing the storage account’s public endpoint.
+
 ---
 
 ## How this maps to the Bicep modules
 
 | Module | Main concepts | Key links created |
 |--------|----------------|-------------------|
-| [`network.bicep`](../bicep/network.bicep) | VNet, subnets, NSGs | NSGs → associated to subnets; subnets live in VNet |
-| [`storage.bicep`](../bicep/storage.bicep) | Managed data disks | Standalone disks; IDs passed to compute |
+| [`network.bicep`](../bicep/network.bicep) | VNet, subnets, NSGs | NSGs → associated to app/db subnets; **`snet-pe`** has no NSG in this lab |
+| [`storage.bicep`](../bicep/storage.bicep) | Managed **VM data** disks | Standalone disks; IDs passed to compute (not Blob Storage) |
 | [`compute.bicep`](../bicep/compute.bicep) | Public IPs, NICs, VMs, extensions | PIP → NIC; NIC → subnet; disks → VM; extension → Linux VMs |
-| [`dns.bicep`](../bicep/dns.bicep) | Private zone, link, A records | Zone ↔ VNet link; A records → known private IPs |
-| [`main.bicep`](../bicep/main.bicep) | Orchestration | Passes subnet IDs and disk IDs between modules in order |
+| [`dns.bicep`](../bicep/dns.bicep) | Internal Private zone | `internal.contoso.local` ↔ VNet; manual A records for VMs |
+| [`blob-privatelink.bicep`](../bicep/blob-privatelink.bicep) | **Blob** storage + **Private Link** | Storage account (public access off) → private endpoint in `snet-pe` → `privatelink.blob…` zone + zone group + container `lab-data` |
+| [`main.bicep`](../bicep/main.bicep) | Orchestration | Passes subnet/VNet IDs into blob module; surfaces blob outputs |
 
 The **ARM** template [`azuredeploy.json`](../arm/azuredeploy.json) expresses the **same** relationships in a single file; the dependency graph is equivalent.
 
@@ -231,6 +271,7 @@ The **ARM** template [`azuredeploy.json`](../arm/azuredeploy.json) expresses the
 | VM disks | Virtual machine → Disks |
 | Public IP | Public IP addresses |
 | Private DNS | Private DNS zones → Records + **Virtual network links** |
+| Private Link / Blob | Storage account → **Networking**; **Private endpoint connections**; Private DNS zone `privatelink.blob…` |
 
 ---
 

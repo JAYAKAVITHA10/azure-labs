@@ -27,6 +27,12 @@ param nsgAppName string
 @description('Name of the NSG attached to the db subnet.')
 param nsgDbName string
 
+@description('Name of the subnet dedicated to private endpoints (no NSG in this lab—see Microsoft guidance for PE + NSG).')
+param subnetPeName string
+
+@description('CIDR for the private endpoint subnet (must fit inside the VNet address space).')
+param subnetPePrefix string
+
 @description('Resource group name used for resource tags (documentation).')
 param resourceGroupName string
 
@@ -157,6 +163,12 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
           }
         }
       }
+      {
+        name: subnetPeName
+        properties: {
+          addressPrefix: subnetPePrefix
+        }
+      }
     ]
   }
 }
@@ -169,3 +181,6 @@ output appSubnetId string = resourceId('Microsoft.Network/virtualNetworks/subnet
 
 @description('Resource ID of the database subnet.')
 output dbSubnetId string = resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, subnetDbName)
+
+@description('Resource ID of the private endpoint subnet.')
+output peSubnetId string = resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, subnetPeName)

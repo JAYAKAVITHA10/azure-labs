@@ -70,6 +70,18 @@
     },
     "vmDbPrivateIp": {
       "value": "10.0.2.4"
+    },
+    "subnetPeName": {
+      "value": "snet-pe"
+    },
+    "subnetPePrefix": {
+      "value": "10.0.3.0/24"
+    },
+    "blobPrivateEndpointName": {
+      "value": "pe-blob-lab"
+    },
+    "blobPrivateDnsVnetLinkName": {
+      "value": "link-blob-pe"
     }
   }
 }

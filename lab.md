@@ -12,6 +12,7 @@
 - Subnets:
   - `snet-app` → `10.0.1.0/24` (App tier)
   - `snet-db`  → `10.0.2.0/24` (DB tier)
+  - `snet-pe`  → `10.0.3.0/24` (Private endpoints — Blob Private Link)
 
 ### Network Security Groups
 - `nsg-app`: Allow inbound HTTP (80), HTTPS (443), SSH (22) from Internet; deny all else inbound
@@ -46,6 +47,12 @@ DB tier (x1):
   - `app02.internal.contoso.local` → static private IP of `vm-app-02`
   - `db01.internal.contoso.local`  → static private IP of `vm-db-01`
 
+### Azure Blob Storage (Private Link use case)
+- **Storage account** (name derived for global uniqueness): `StorageV2`, **Standard_LRS**, **public network access disabled**, default network **Deny** (trusted Microsoft bypass allowed).
+- **Blob container** `lab-data` (private / no anonymous access).
+- **Private endpoint** (parameterised name) in `snet-pe`, sub-resource **`blob`**, auto-approved in same subscription.
+- **Private DNS** zone `privatelink.blob.core.windows.net` (public Azure) linked to `vnet-prod`; **private DNS zone group** on the endpoint so `*.blob.core.windows.net` resolves to the endpoint’s private IP from inside the VNet.
+
 ---
 
 ## REQUIREMENTS FOR ARM TEMPLATE (arm/azuredeploy.json)
@@ -56,7 +63,7 @@ DB tier (x1):
 - VM extensions: add `CustomScriptExtension` on Linux VMs that runs:
   `sudo apt-get update && sudo apt-get install -y nginx`
   (This lets students validate the VM is running after deploy)
-- Use `outputs` section to export: VNet ID, Subnet IDs, all VM private IPs, DNS zone ID
+- Use `outputs` section to export: VNet ID, Subnet IDs (including private-endpoint subnet), all VM private IPs, internal DNS zone ID, Blob Private Link fields (storage account name, blob HTTPS URI, private endpoint IP, `privatelink.blob…` zone ID)
 - Split parameters file into `dev` (smaller SKUs: Standard_B1s, 64 GB disks) and `prod` (full spec above)
 
 ---
@@ -65,10 +72,11 @@ DB tier (x1):
 
 - Use Bicep `targetScope = 'resourceGroup'`
 - Each module must have: `@description()` decorators on every param, typed params (no `object` where specific type works), and `output` for key resource IDs/IPs
-- `network.bicep`: outputs `vnetId`, `appSubnetId`, `dbSubnetId`
+- `network.bicep`: outputs `vnetId`, `appSubnetId`, `dbSubnetId`, `peSubnetId`
 - `compute.bicep`: takes subnet IDs as input params; outputs all VM private IPs as an array
 - `storage.bicep`: takes VM resource IDs; attaches data disks (use `existing` resource reference)
 - `dns.bicep`: takes VNet ID and VM private IPs as inputs; creates zone, VNet link, and A records
+- `blob-privatelink.bicep` (or equivalent): Blob storage with public access disabled, private endpoint to `blob`, `privatelink.blob…` zone + VNet link + zone group; outputs storage name and private endpoint IP
 - `main.bicep`: orchestrates all modules, passes outputs between them
 - Use `@secure()` on all password/key params
 - Use Bicep loops (`for`) to create the two app VMs and their disks — DRY, not duplicated blocks

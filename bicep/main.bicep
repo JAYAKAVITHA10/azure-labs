@@ -1,5 +1,5 @@
-// Orchestration order: network → empty managed disks → VMs (attach disks at create) → Private DNS.
-// Disks are defined before VMs so the attach uses stable resource IDs; this matches the ARM single-template pattern.
+// Orchestration order: network → managed data disks → VMs → internal Private DNS → Blob Storage + Private Link.
+// Blob Private Link only needs the VNet and PE subnet; it is deployed after core infra so outputs stay grouped.
 
 targetScope = 'resourceGroup'
 
@@ -32,6 +32,18 @@ param nsgAppName string
 
 @description('Name of the NSG attached to the db subnet.')
 param nsgDbName string
+
+@description('Name of the subnet used for the blob private endpoint.')
+param subnetPeName string
+
+@description('CIDR for the private endpoint subnet.')
+param subnetPePrefix string
+
+@description('Name of the private endpoint to Blob Storage.')
+param blobPrivateEndpointName string
+
+@description('VNet link name under the Azure blob Private DNS zone (privatelink.blob.<storage-suffix>).')
+param blobPrivateDnsVnetLinkName string
 
 @description('Names of the two Ubuntu application VMs.')
 param appVmNames array
@@ -89,6 +101,8 @@ module network 'network.bicep' = {
     subnetDbPrefix: subnetDbPrefix
     nsgAppName: nsgAppName
     nsgDbName: nsgDbName
+    subnetPeName: subnetPeName
+    subnetPePrefix: subnetPePrefix
   }
 }
 
@@ -136,6 +150,17 @@ module dns 'dns.bicep' = {
   }
 }
 
+module blobPrivateLink 'blob-privatelink.bicep' = {
+  name: 'blobPrivateLink'
+  params: {
+    location: location
+    privateEndpointSubnetId: network.outputs.peSubnetId
+    vnetId: network.outputs.vnetId
+    privateEndpointName: blobPrivateEndpointName
+    blobPrivateDnsVnetLinkName: blobPrivateDnsVnetLinkName
+  }
+}
+
 @description('Resource ID of the virtual network.')
 output vnetId string = network.outputs.vnetId
 
@@ -150,3 +175,15 @@ output vmPrivateIps array = compute.outputs.vmPrivateIps
 
 @description('Resource ID of the private DNS zone.')
 output privateDnsZoneId string = dns.outputs.privateDnsZoneId
+
+@description('Storage account name created for Private Link blob demo.')
+output blobStorageAccountName string = blobPrivateLink.outputs.storageAccountName
+
+@description('HTTPS blob endpoint (resolves to private IP inside linked VNets).')
+output blobEndpointUri string = blobPrivateLink.outputs.blobEndpointUri
+
+@description('Private IP used for blob traffic on the private endpoint.')
+output blobPrivateEndpointIp string = blobPrivateLink.outputs.blobPrivateEndpointIp
+
+@description('Resource ID of the Private DNS zone used for blob Private Link.')
+output blobPrivateDnsZoneId string = blobPrivateLink.outputs.blobPrivateDnsZoneId

@@ -8,6 +8,7 @@ By the end of this lab you will be able to:
 - Provision **Linux** application VMs (with public IPs for SSH in this lab) and a **private** Windows VM on a database subnet.
 - Attach **Premium managed data disks** separate from OS disks.
 - Configure **Azure Private DNS** with **auto-registration** and **manual A records** for stable internal names.
+- Use **Private Link** to **Azure Blob Storage** (dedicated subnet, private endpoint, `privatelink.blob…` DNS) with **public network access disabled** on the account.
 - Validate connectivity and DNS resolution from a jump/app host, and relate portal views (NSG effective rules, disks) to the template design.
 
 ---
@@ -165,6 +166,20 @@ Run these after a successful deploy.
    DNS should resolve; **HTTP** should return nginx headers (`200`).
 
 4. In the **Azure Portal**, open **Network security groups** → **nsg-db** → **Effective security rules** (or subnet association view) and confirm **Internet** is not a permitted source for SQL to the database tier—only the app subnet CIDR should allow **1433** inbound to that tier’s workloads.
+
+5. **Blob over Private Link:** From the deployment outputs, note `blobStorageAccountName` and `blobPrivateEndpointIp`. On `vm-app-01`, run:
+
+   ```bash
+   nslookup <blobStorageAccountName>.blob.core.windows.net
+   ```
+
+   The address returned should be a **private** IP in your VNet (the private endpoint), **not** a public Azure storage IP. Then verify HTTPS reaches the endpoint (expect **403** without auth—that still proves TLS to Blob over the private path):
+
+   ```bash
+   curl -s -o /dev/null -w "%{http_code}\n" "https://<blobStorageAccountName>.blob.core.windows.net/"
+   ```
+
+   In the portal, open the **storage account** → **Networking**: **Public network access** should be **Disabled**, and **Private endpoint connections** should show **Approved** for the `blob` target.
 
 ---
 
